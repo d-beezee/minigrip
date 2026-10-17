@@ -148,7 +148,7 @@ export default function ConnectionDialog({ initial, onClose, onSaved }) {
               <select value={c.ssh.auth} onChange={(e) => setSsh('auth', e.target.value)}>
                 <option value="password">Password</option>
                 <option value="key">Key pair</option>
-                <option value="agent">SSH agent</option>
+                <option value="agent">OpenSSH config and agent</option>
               </select>
             </Field>
             {c.ssh.auth === 'password' && (
@@ -180,7 +180,18 @@ export default function ConnectionDialog({ initial, onClose, onSaved }) {
                 </Field>
               </>
             )}
-            {c.ssh.auth === 'agent' && <p className="note wide">Uses the agent at <code>$SSH_AUTH_SOCK</code> of the MiniGrip server process.</p>}
+            {c.ssh.auth === 'agent' && (
+              <p className="note wide">
+                Like <code>ssh</code>: reads <code>~/.ssh/config</code> (host aliases, User, Port, IdentityFile), then tries the agent
+                and the key files (<code>~/.ssh/id_rsa</code>, <code>id_ed25519</code>…). Encrypted keys need the passphrase below.
+              </p>
+            )}
+            {c.ssh.auth === 'agent' && (
+              <Field label="Key passphrase (optional)" wide>
+                <input type="password" value={c.ssh.passphrase} placeholder={secretPh(initial?.ssh?.hasPassphrase)} autoComplete="new-password"
+                  onChange={(e) => { setSsh('passphrase', e.target.value); touch('ssh.passphrase'); }} />
+              </Field>
+            )}
           </fieldset>
         </div>
       )}
