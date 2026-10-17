@@ -33,5 +33,12 @@ The old browser mode still works: `npm run web` serves http://127.0.0.1:4870.
 - PostgreSQL lists the schemas of the configured database only (one database per connection).
 
 ## Releases
-Publishing a GitHub release runs `.github/workflows/release.yml`: it builds the `.deb`, `.AppImage` and Windows
-`.exe` installer for the release tag (version taken from the tag, e.g. `v1.2.0`) and attaches them to the release.
+Publishing a GitHub release runs `.github/workflows/release.yml`: it builds the `.deb`, `.AppImage`, Windows
+`.exe` installer and macOS `.dmg` (arm64 and x64) for the release tag (version taken from the tag, e.g. `v1.2.0`)
+and attaches them to the release.
+
+The macOS build is not signed or notarized. After copying MiniGrip to Applications, macOS may say the app is
+damaged or can't be opened; clear the quarantine flag once:
+```bash
+xattr -cr /Applications/MiniGrip.app
+```

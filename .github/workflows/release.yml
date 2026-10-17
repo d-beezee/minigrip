@@ -1,7 +1,7 @@
 name: Release
 
 # Builds the desktop packages when a GitHub release is published and attaches them to it:
-# Linux .deb + .AppImage, Windows .exe (NSIS installer).
+# Linux .deb + .AppImage, Windows .exe (NSIS installer), macOS .dmg (Apple Silicon + Intel, unsigned).
 on:
   release:
     types: [published]
@@ -26,10 +26,15 @@ jobs:
           - os: windows-latest
             targets: --win nsis
             files: release/*.exe
+          - os: macos-latest
+            targets: --mac dmg --arm64 --x64
+            files: release/*.dmg
     runs-on: ${{ matrix.os }}
     env:
       TAG: ${{ github.event.release.tag_name || inputs.tag }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # no Apple Developer certificate: build unsigned instead of searching the keychain
+      CSC_IDENTITY_AUTO_DISCOVERY: false
     defaults:
       run:
         shell: bash
