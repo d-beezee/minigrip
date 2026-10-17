@@ -84,6 +84,8 @@ async function connectOptions(ssh) {
   const keys = loadKeys(cfg.identityFiles, ssh.passphrase);
   const methods = [];
   if (agent) methods.push({ type: 'agent', username: cfg.user, agent });
+  // Windows: the OpenSSH agent service is disabled by default, PuTTY users keep keys in Pageant
+  if (process.platform === 'win32') methods.push({ type: 'agent', username: cfg.user, agent: 'pageant' });
   for (const k of keys) methods.push({ type: 'publickey', username: cfg.user, key: k.key });
   if (!methods.length) {
     throw new Error(`no SSH agent and no usable key in ${cfg.identityFiles.join(', ')}`);
@@ -98,7 +100,7 @@ async function connectOptions(ssh) {
       if (!m) return next(false);
       next(m);
     },
-    tried: [agent ? 'agent' : null, ...keys.map((k) => k.path)].filter(Boolean),
+    tried: [agent ? 'agent' : null, process.platform === 'win32' ? 'pageant' : null, ...keys.map((k) => k.path)].filter(Boolean),
   };
 }
 
@@ -140,7 +142,8 @@ export async function openTunnel(ssh, dstHost, dstPort, onClose) {
       });
     });
     conn.on('error', (e) => {
-      if (ready) return;
+      // an unreachable agent is not fatal: ssh2 reports it and moves on to the next auth method
+      if (ready || e.level === 'agent') return;
       const tried = opts.tried?.length && /authentication methods failed/i.test(e.message) ? ` (tried: ${opts.tried.join(', ')})` : '';
       reject(new Error('SSH: ' + e.message + tried));
     });
