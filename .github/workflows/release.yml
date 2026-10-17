@@ -1,0 +1,59 @@
+name: Release
+
+# Builds the desktop packages when a GitHub release is published and attaches them to it:
+# Linux .deb + .AppImage, Windows .exe (NSIS installer).
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build and attach to
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            targets: --linux deb AppImage
+            files: release/*.deb release/*.AppImage
+          - os: windows-latest
+            targets: --win nsis
+            files: release/*.exe
+    runs-on: ${{ matrix.os }}
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Set version from tag
+        run: npm version "${TAG#v}" --no-git-tag-version --allow-same-version
+
+      - name: Build UI
+        run: npx vite build
+
+      - name: Package
+        run: npx electron-builder ${{ matrix.targets }} --publish never
+
+      - name: Attach to release
+        run: gh release upload "$TAG" ${{ matrix.files }} --clobber --repo "$GITHUB_REPOSITORY"

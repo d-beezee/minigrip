@@ -1,0 +1,92 @@
+{
+  "name": "minigrip",
+  "version": "1.0.0",
+  "description": "MiniGrip — a small DataGrip-style SQL client for MySQL, MariaDB and PostgreSQL",
+  "scripts": {
+    "app": "vite build && electron .",
+    "app:dev": "concurrently -k -n web,app \"vite\" \"electron . --dev\"",
+    "dist": "vite build && electron-builder",
+    "dist:linux": "vite build && electron-builder --linux",
+    "dist:win": "vite build && electron-builder --win",
+    "dist:mac": "vite build && electron-builder --mac",
+    "web": "vite build && node server/index.js",
+    "web:dev": "concurrently -k -n api,web \"node --watch server/index.js\" \"vite\"",
+    "build": "vite build"
+  },
+  "keywords": [],
+  "author": {
+    "name": "d-beezee",
+    "email": "d-beezee@users.noreply.github.com"
+  },
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "csv-parse": "^7.0.3",
+    "csv-stringify": "^6.9.0",
+    "express": "^5.3.0",
+    "mysql2": "^3.24.6",
+    "pg": "^8.23.1",
+    "ssh2": "^1.17.0"
+  },
+  "devDependencies": {
+    "@codemirror/lang-sql": "^6.10.0",
+    "@fontsource/inter": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "@uiw/react-codemirror": "^4.25.12",
+    "@vitejs/plugin-react": "^6.1.2",
+    "concurrently": "^10.0.6",
+    "electron": "^44.9.0",
+    "electron-builder": "^26.15.3",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "vite": "^8.3.4"
+  },
+  "main": "electron/main.js",
+  "build": {
+    "appId": "io.minigrip.app",
+    "productName": "MiniGrip",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**",
+      "server/**",
+      "shared/**",
+      "dist/**",
+      "package.json"
+    ],
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Development",
+      "icon": "electron/icon.png",
+      "syncDesktopName": true,
+      "maintainer": "d-beezee <d-beezee@users.noreply.github.com>"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "electron/icon.png",
+      "artifactName": "${productName}-Setup-${version}.${ext}"
+    },
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.developer-tools",
+      "icon": "electron/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "deb": {
+      "artifactName": "${name}_${version}_${arch}.${ext}"
+    }
+  },
+  "desktopName": "minigrip.desktop",
+  "homepage": "https://github.com/d-beezee/minigrip",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/d-beezee/minigrip.git"
+  }
+}
