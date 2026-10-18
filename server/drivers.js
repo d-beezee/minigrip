@@ -5,6 +5,7 @@
 //   q(ident) quotes an identifier, lit(value) renders a SQL literal
 //   origins(columns) -> [{ schema, table, column } | null]: where each result column comes from
 //   ph(n) is the n-th (1-based) bind placeholder
+import fs from 'node:fs';
 import os from 'node:os';
 import { spawn } from 'node:child_process';
 import mysql from 'mysql2/promise';
@@ -401,10 +402,29 @@ async function sqliteDriver(cfg) {
     throw e;
   }
 
+  // Tools that rewrite the database (migration resets, copy over, atomic save) replace the file:
+  // the open handle keeps reading the old one. A new inode means "reopen on next use".
+  // A missing file keeps the session: reopening would create an empty database.
+  const fileId = () => {
+    try {
+      const st = fs.statSync(file);
+      return `${st.dev}:${st.ino}`;
+    } catch {
+      return null;
+    }
+  };
+  const openedId = fileId();
+
   const d = {
     dialect: 'sqlite',
     version,
-    get alive() { return alive; },
+    get alive() {
+      if (alive && openedId) {
+        const id = fileId();
+        if (id && id !== openedId) alive = false;
+      }
+      return alive;
+    },
     async query(sql, params) {
       return [fromChild(await call(sql, params))];
     },
