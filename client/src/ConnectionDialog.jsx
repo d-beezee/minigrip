@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { api } from './api.js';
-import { Modal, Field, Icon } from './ui.jsx';
+import { Modal, Field, Icon, TYPE_LABEL } from './ui.jsx';
 
 const COLORS = ['', '#5fb865', '#3574f0', '#e5a33a', '#d95e5e', '#a77de8', '#3fb8c9'];
 const DEFAULT_PORT = { mysql: 3306, mariadb: 3306, postgres: 5432 };
+const BADGE = { postgres: 'PG', mysql: 'My', mariadb: 'Ma', sqlite: 'SL' };
 
 const blank = () => ({
-  name: '', type: 'postgres', host: 'localhost', port: '', user: '', password: '', database: '',
+  name: '', type: 'postgres', host: 'localhost', port: '', user: '', password: '', database: '', file: '',
   ssl: false, sslVerify: false, color: '', readOnly: false,
   ssh: { enabled: false, host: '', port: 22, user: '', auth: 'password', password: '', keyPath: '~/.ssh/id_rsa', privateKey: '', passphrase: '' },
 });
@@ -27,6 +28,7 @@ export default function ConnectionDialog({ initial, onClose, onSaved }) {
   const set = (k, v) => setC((o) => ({ ...o, [k]: v }));
   const setSsh = (k, v) => setC((o) => ({ ...o, ssh: { ...o.ssh, [k]: v } }));
   const touch = (k) => setTouched((t) => ({ ...t, [k]: true }));
+  const lite = c.type === 'sqlite';
 
   function payload() {
     const out = structuredClone(c);
@@ -34,7 +36,8 @@ export default function ConnectionDialog({ initial, onClose, onSaved }) {
     for (const k of ['hasPassword', 'hasPrivateKey', 'hasPassphrase']) delete out.ssh[k];
     out.port = Number(out.port) || DEFAULT_PORT[out.type];
     out.ssh.port = Number(out.ssh.port) || 22;
-    if (!out.name.trim()) out.name = `${out.user || 'db'}@${out.host}`;
+    if (lite) out.ssh.enabled = false;
+    if (!out.name.trim()) out.name = lite ? out.file.split(/[\\/]/).pop() || 'SQLite' : `${out.user || 'db'}@${out.host}`;
     // untouched secret fields of an existing connection: omit so the server keeps the stored value
     if (editing) {
       if (!touched.password) delete out.password;
@@ -45,10 +48,10 @@ export default function ConnectionDialog({ initial, onClose, onSaved }) {
 
   async function test() {
     setBusy(true);
-    setStatus({ kind: 'busy', text: c.ssh.enabled ? 'Opening SSH tunnel and connecting…' : 'Connecting…' });
+    setStatus({ kind: 'busy', text: c.ssh.enabled && !lite ? 'Opening SSH tunnel and connecting…' : 'Connecting…' });
     try {
       const r = await api.test({ ...payload(), id: initial?.id });
-      setStatus({ kind: 'ok', text: `Connected — server ${r.version} (${r.ms} ms)` });
+      setStatus({ kind: 'ok', text: `Connected — ${lite ? 'SQLite' : 'server'} ${r.version} (${r.ms} ms)` });
     } catch (e) {
       setStatus({ kind: 'err', text: e.message });
     } finally {
@@ -84,24 +87,47 @@ export default function ConnectionDialog({ initial, onClose, onSaved }) {
       }
     >
       <div className="type-picker">
-        {['postgres', 'mysql', 'mariadb'].map((t) => (
+        {['postgres', 'mysql', 'mariadb', 'sqlite'].map((t) => (
           <button key={t} className={'type-opt' + (c.type === t ? ' on' : '')}
-            onClick={() => { set('type', t); if (!c.port || c.port == DEFAULT_PORT[c.type]) set('port', ''); }}>
-            <span className={'type-badge t-' + t}>{t === 'postgres' ? 'PG' : t === 'mysql' ? 'My' : 'Ma'}</span>
-            {t === 'postgres' ? 'PostgreSQL' : t === 'mysql' ? 'MySQL' : 'MariaDB'}
+            onClick={() => {
+              set('type', t);
+              if (!c.port || c.port == DEFAULT_PORT[c.type]) set('port', '');
+              if (t === 'sqlite' && tab === 'ssh') setTab('general');
+            }}>
+            <span className={'type-badge t-' + t}>{BADGE[t]}</span>
+            {TYPE_LABEL[t]}
           </button>
         ))}
       </div>
 
       <div className="tabs-mini">
-        {[['general', 'General'], ['ssh', 'SSH tunnel'], ['options', 'Options']].map(([k, l]) => (
+        {[['general', 'General'], !lite && ['ssh', 'SSH tunnel'], ['options', 'Options']].filter(Boolean).map(([k, l]) => (
           <button key={k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>
             {l}{k === 'ssh' && c.ssh.enabled && <span className="dot-on" />}
           </button>
         ))}
       </div>
 
-      {tab === 'general' && (
+      {tab === 'general' && lite && (
+        <div className="form-grid">
+          <Field label="Name" wide>
+            <input value={c.name} onChange={(e) => set('name', e.target.value)} placeholder={c.file.split(/[\\/]/).pop() || 'SQLite'} autoFocus />
+          </Field>
+          <Field label="Database file" wide hint="Path on the machine running MiniGrip. Created if it doesn't exist.">
+            <div className="input-row">
+              <input value={c.file} onChange={(e) => set('file', e.target.value)} placeholder="~/data/app.db" />
+              {window.minigrip?.pickFile && (
+                <button type="button" className="btn" onClick={async () => {
+                  const p = await window.minigrip.pickFile({ title: 'Choose SQLite database' });
+                  if (p) set('file', p);
+                }}>Browse…</button>
+              )}
+            </div>
+          </Field>
+        </div>
+      )}
+
+      {tab === 'general' && !lite && (
         <div className="form-grid">
           <Field label="Name" wide>
             <input value={c.name} onChange={(e) => set('name', e.target.value)} placeholder={`${c.user || 'user'}@${c.host || 'host'}`} autoFocus />
@@ -128,7 +154,7 @@ export default function ConnectionDialog({ initial, onClose, onSaved }) {
         </div>
       )}
 
-      {tab === 'ssh' && (
+      {tab === 'ssh' && !lite && (
         <div className="form-grid">
           <label className="check wide">
             <input type="checkbox" checked={c.ssh.enabled} onChange={(e) => setSsh('enabled', e.target.checked)} />
@@ -198,12 +224,16 @@ export default function ConnectionDialog({ initial, onClose, onSaved }) {
 
       {tab === 'options' && (
         <div className="form-grid">
-          <label className="check wide">
-            <input type="checkbox" checked={c.ssl} onChange={(e) => set('ssl', e.target.checked)} /> Use SSL/TLS
-          </label>
-          <label className="check wide" style={{ opacity: c.ssl ? 1 : 0.5 }}>
-            <input type="checkbox" disabled={!c.ssl} checked={c.sslVerify} onChange={(e) => set('sslVerify', e.target.checked)} /> Verify server certificate
-          </label>
+          {!lite && (
+            <>
+              <label className="check wide">
+                <input type="checkbox" checked={c.ssl} onChange={(e) => set('ssl', e.target.checked)} /> Use SSL/TLS
+              </label>
+              <label className="check wide" style={{ opacity: c.ssl ? 1 : 0.5 }}>
+                <input type="checkbox" disabled={!c.ssl} checked={c.sslVerify} onChange={(e) => set('sslVerify', e.target.checked)} /> Verify server certificate
+              </label>
+            </>
+          )}
           <label className="check wide">
             <input type="checkbox" checked={c.readOnly} onChange={(e) => set('readOnly', e.target.checked)} /> Warn before running data-modifying statements
           </label>

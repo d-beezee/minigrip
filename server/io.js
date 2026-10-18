@@ -82,8 +82,8 @@ export async function dumpSchema(driver, schema, { tables, ddl = true, data = tr
     if (data) {
       const [res] = await driver.query(`SELECT * FROM ${driver.q(schema)}.${driver.q(t.name)}`);
       if (res.rows.length) {
-        // MySQL's SHOW CREATE TABLE is unqualified, so keep INSERTs unqualified too (restore into any database)
-        const target = driver.dialect === 'mysql' ? driver.q(t.name) : driver.q(schema) + '.' + driver.q(t.name);
+        // MySQL's SHOW CREATE TABLE and SQLite's DDL are unqualified, so keep INSERTs unqualified too (restore into any database)
+        const target = driver.dialect !== 'postgres' ? driver.q(t.name) : driver.q(schema) + '.' + driver.q(t.name);
         out += insertStatements(driver, target, res.columns.map((c) => c.name), res.rows) + '\n';
       }
     }

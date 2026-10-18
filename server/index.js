@@ -6,6 +6,7 @@ import { store, publicView, mergeSecrets } from './store.js';
 import { openSession, getSession, closeSession, hasSession, closeAll } from './session.js';
 import { splitSql } from '../shared/split.js';
 import { displayValue, formatResult, dumpSchema, importData, runScript, MIME, EXT } from './io.js';
+import { editInfo, applyChanges } from './edit.js';
 
 const app = express();
 let TOKEN = null;
@@ -103,7 +104,8 @@ app.post('/api/connections/:id/query', wrap(async (req) => {
             results.push({
               sql: st.text,
               ms,
-              columns: r.columns,
+              columns: r.columns.map(({ name, type }) => ({ name, type })),
+              edit: await editInfo(d, r.columns, st.text).catch((e) => ({ readOnly: e.message })),
               rows: r.rows.slice(0, maxRows).map((row) => row.map(displayValue)),
               total,
               truncated: total > maxRows,
@@ -120,6 +122,14 @@ app.post('/api/connections/:id/query', wrap(async (req) => {
     }
     return { results, schema: s.schema };
   });
+}));
+
+// Save pending grid edits: [{ op: 'update', key, set } | { op: 'insert', values } | { op: 'delete', key }]
+app.post('/api/connections/:id/edit', wrap(async (req) => {
+  const { schema, table, changes } = req.body;
+  if (!changes?.length) return { statements: [] };
+  const s = await session(req);
+  return s.exec((d) => applyChanges(d, schema, table, changes));
 }));
 
 app.post('/api/connections/:id/cancel', wrap(async (req) => {

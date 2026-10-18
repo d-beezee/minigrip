@@ -8,7 +8,7 @@ export async function openSession(cfg) {
   let dead = false;
   let host = cfg.host || '127.0.0.1';
   let port = Number(cfg.port) || defaultPort(cfg.type);
-  if (cfg.ssh?.enabled) {
+  if (cfg.ssh?.enabled && cfg.type !== 'sqlite') {
     tunnel = await openTunnel(cfg.ssh, host, port, () => (dead = true));
     host = '127.0.0.1';
     port = tunnel.port;

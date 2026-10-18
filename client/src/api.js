@@ -27,6 +27,7 @@ export const api = {
   connect: (id) => req('POST', `/connections/${id}/connect`),
   disconnect: (id) => req('POST', `/connections/${id}/disconnect`),
   query: (id, body) => req('POST', `/connections/${id}/query`, body),
+  edit: (id, body) => req('POST', `/connections/${id}/edit`, body),
   cancel: (id) => req('POST', `/connections/${id}/cancel`),
   schemas: (id) => req('GET', `/connections/${id}/schemas`),
   objects: (id, schema) => req('GET', `/connections/${id}/objects?schema=${enc(schema)}`),

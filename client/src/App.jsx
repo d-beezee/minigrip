@@ -8,7 +8,7 @@ import { Icon, ContextMenu, Modal, useDrag, TYPE_LABEL } from './ui.jsx';
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const now = () => new Date().toLocaleTimeString([], { hour12: false });
-const q = (type, id) => (type === 'postgres' ? '"' + id.replace(/"/g, '""') + '"' : '`' + id.replace(/`/g, '``') + '`');
+const q = (type, id) => (type === 'mysql' || type === 'mariadb' ? '`' + id.replace(/`/g, '``') + '`' : '"' + id.replace(/"/g, '""') + '"');
 const WRITE_RE = /^\s*(insert|update|delete|drop|alter|truncate|create|replace|rename|grant|revoke|merge)\b/im;
 
 const EXPORT_FORMATS = [
@@ -191,6 +191,32 @@ export default function App() {
       patchTab(t.id, (o) => ({ running: false, active: 'output', log: [...o.log, { kind: 'err', time: now(), text: e.message }] }));
       addHistory(c.id, sql, false);
     }
+  }
+
+  // Save a result grid's pending edits, then reload that result in place. Resolves true once saved.
+  async function submitEdits(t, result, changes) {
+    const c = connections.find((x) => x.id === t.connId);
+    if (!c) return false;
+    const { schema, table } = result.edit;
+    if (c.readOnly && !window.confirm(`"${c.name}" is marked as protected.\nSave ${changes.length} change${changes.length === 1 ? '' : 's'} to ${table} anyway?`)) return false;
+    try {
+      const r = await api.edit(c.id, { schema, table, changes });
+      patchTab(t.id, (o) => ({ log: [...o.log, ...r.statements.map((sql) => ({ kind: 'ok', time: now(), sql, text: '' })),
+        { kind: 'ok', time: now(), text: `${r.statements.length} change${r.statements.length === 1 ? '' : 's'} saved to ${table}` }] }));
+      addHistory(c.id, r.statements.map((s) => s + ';').join('\n'), true);
+    } catch (e) {
+      patchTab(t.id, (o) => ({ log: [...o.log, { kind: 'err', time: now(), text: `Changes not saved: ${e.message}` }] }));
+      toast('err', 'Changes not saved: ' + e.message);
+      return false;
+    }
+    try {
+      const q = await api.query(c.id, { sql: result.sql, schema: t.schema || undefined, maxRows: 2000 });
+      const fresh = q.results.find((x) => x.columns);
+      if (fresh) patchTab(t.id, (o) => ({ results: o.results.map((x) => (x === result ? fresh : x)) }));
+    } catch (e) {
+      toast('err', 'Saved, but reloading the result failed: ' + e.message);
+    }
+    return true;
   }
 
   async function cancel(t) {
@@ -441,10 +467,12 @@ export default function App() {
             tab={tab}
             conn={conn}
             completion={completion}
+            schemaName={tab.schema || cs?.schema}
             editorRef={editorRef}
             onChange={(p) => patchTab(tab.id, p)}
             onRun={(sql, base) => run(tab, sql, base)}
             onCancel={() => cancel(tab)}
+            onSubmitEdits={(r, changes) => submitEdits(tab, r, changes)}
             onSetActive={(a) => patchTab(tab.id, { active: a })}
             onExport={(e, r) => setMenu({ x: e.clientX, y: e.clientY, items: exportItems(conn, tab.schema, r.sql, guessTable(r.sql)) })}
           />

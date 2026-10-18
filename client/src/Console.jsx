@@ -1,13 +1,14 @@
 import { useMemo, useRef, useState, useEffect } from 'react';
 import CodeMirror from '@uiw/react-codemirror';
-import { sql as sqlLang, MySQL, MariaSQL, PostgreSQL } from '@codemirror/lang-sql';
+import { sql as sqlLang, MySQL, MariaSQL, PostgreSQL, SQLite } from '@codemirror/lang-sql';
 import { keymap, EditorView } from '@codemirror/view';
 import { Prec } from '@codemirror/state';
 import { statementAt } from '@shared/split.js';
 import ResultGrid from './ResultGrid.jsx';
+import { columnSource } from './completion.js';
 import { Icon, useDrag } from './ui.jsx';
 
-const DIALECT = { mysql: MySQL, mariadb: MariaSQL, postgres: PostgreSQL };
+const DIALECT = { mysql: MySQL, mariadb: MariaSQL, postgres: PostgreSQL, sqlite: SQLite };
 
 const theme = EditorView.theme({
   '&': { height: '100%', fontSize: '13.5px', backgroundColor: 'var(--editor)' },
@@ -23,13 +24,22 @@ const theme = EditorView.theme({
   '.cm-flash': { backgroundColor: 'rgba(53,116,240,0.22)', transition: 'background-color .6s' },
 }, { dark: true });
 
-export default function Console({ tab, conn, completion, onChange, onRun, onCancel, onExport, onSetActive, editorRef }) {
+// { table: [{ name, type, pk }] } -> lang-sql's namespace, with column types shown next to the names
+const toNamespace = (completion) =>
+  Object.fromEntries(Object.entries(completion || {}).map(([t, cols]) => [t, cols.map((c) => ({
+    label: c.name, type: c.pk ? 'constant' : 'property', detail: c.type,
+  }))]));
+
+const quoter = (dialect) => (id) =>
+  dialect === 'mysql' || dialect === 'mariadb' ? '`' + id.replace(/`/g, '``') + '`' : '"' + id.replace(/"/g, '""') + '"';
+
+export default function Console({ tab, conn, completion, schemaName, onChange, onRun, onCancel, onExport, onSubmitEdits, onSetActive, editorRef }) {
   const viewRef = useRef(null);
   const [split, setSplit] = useState(() => Number(localStorage.getItem('mg.split')) || 0.48);
   const wrap = useRef();
 
   const dialect = conn?.type || 'postgres';
-  const splitDialect = dialect === 'postgres' ? 'postgres' : 'mysql';
+  const splitDialect = dialect === 'mariadb' ? 'mysql' : dialect;
 
   // Which text to run: selection, statement under cursor, or whole script.
   const pick = (all) => {
@@ -66,15 +76,19 @@ export default function Console({ tab, conn, completion, onChange, onRun, onCanc
     };
   });
 
-  const extensions = useMemo(() => [
-    sqlLang({ dialect: DIALECT[dialect], schema: completion || {}, upperCaseKeywords: true }),
-    theme,
-    EditorView.lineWrapping,
-    Prec.highest(keymap.of([
-      { key: 'Mod-Enter', run: () => { editorRef.current?.run(false); return true; } },
-      { key: 'Shift-Mod-Enter', run: () => { editorRef.current?.run(true); return true; } },
-    ])),
-  ], [dialect, completion]);
+  const extensions = useMemo(() => {
+    const lang = sqlLang({ dialect: DIALECT[dialect], schema: toNamespace(completion), upperCaseKeywords: true });
+    return [
+      lang,
+      lang.language.data.of({ autocomplete: columnSource({ schema: completion, defaultSchema: schemaName, dialect: splitDialect, quote: quoter(dialect) }) }),
+      theme,
+      EditorView.lineWrapping,
+      Prec.highest(keymap.of([
+        { key: 'Mod-Enter', run: () => { editorRef.current?.run(false); return true; } },
+        { key: 'Shift-Mod-Enter', run: () => { editorRef.current?.run(true); return true; } },
+      ])),
+    ];
+  }, [dialect, completion, schemaName]);
 
   const startDrag = useDrag((e) => {
     const r = wrap.current.getBoundingClientRect();
@@ -122,7 +136,7 @@ export default function Console({ tab, conn, completion, onChange, onRun, onCanc
         <div className="result-body">
           {tab.running && <div className="running-bar" />}
           {activeResult ? (
-            <ResultGrid result={activeResult} onExport={(e) => onExport(e, activeResult)} />
+            <ResultGrid result={activeResult} dialect={splitDialect} onExport={(e) => onExport(e, activeResult)} onSubmit={onSubmitEdits} />
           ) : (
             <OutputLog log={tab.log} running={tab.running} />
           )}

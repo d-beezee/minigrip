@@ -116,7 +116,7 @@ const Sidebar = forwardRef(function Sidebar({ connections, connState, actions, f
         <span className={'type-badge sm t-' + c.type}>{TYPE_LABEL[c.type]}</span>
       </>,
       className: 'conn' + (cs.status === 'connected' ? ' live' : ''),
-      title: `${c.user}@${c.host}:${c.port}${c.database ? '/' + c.database : ''}${c.ssh?.enabled ? ` via ssh ${c.ssh.user}@${c.ssh.host}` : ''}`,
+      title: c.type === 'sqlite' ? c.file : `${c.user}@${c.host}:${c.port}${c.database ? '/' + c.database : ''}${c.ssh?.enabled ? ` via ssh ${c.ssh.user}@${c.ssh.host}` : ''}`,
       expandable: true,
       isOpen,
       onToggle: () => toggle(c.id, () => loaders.conn(c.id)),

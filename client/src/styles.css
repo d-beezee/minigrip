@@ -132,6 +132,7 @@ input:disabled, select:disabled { opacity: 0.55; }
 .t-postgres { background: rgba(80, 136, 214, 0.18); color: #7fa8e6; }
 .t-mysql { background: rgba(229, 145, 58, 0.16); color: #e7a45c; }
 .t-mariadb { background: rgba(196, 112, 82, 0.18); color: #d99479; }
+.t-sqlite { background: rgba(92, 170, 160, 0.18); color: #7cc4b8; }
 
 /* ---------------------------------------------------------------- tabs */
 
@@ -211,6 +212,20 @@ kbd { font-size: 11px; padding: 2px 6px; border: 1px solid var(--border-2); bord
 .sort-ind { font-size: 9px; margin-left: auto; }
 .col-resize { position: absolute; right: -3px; top: 0; bottom: 0; width: 7px; cursor: col-resize; z-index: 2; }
 .col-resize:hover { background: var(--accent); }
+/* pending edits use DataGrip's diff colours: blue modified, green inserted, grey struck-through deleted */
+.edit-tools { display: flex; align-items: center; gap: 4px; margin-left: 6px; }
+.icon-btn:disabled { opacity: 0.4; cursor: default; }
+.pending-chip { font-size: 11.5px; color: #8fb4ff; border: 1px solid rgba(74, 133, 245, 0.45); border-radius: 10px; padding: 1px 8px; margin: 0 2px 0 4px; white-space: nowrap; }
+.ro-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--dim); border: 1px solid var(--border-2); border-radius: 10px; padding: 1px 8px; cursor: help; white-space: nowrap; }
+.gcell.changed { background: rgba(53, 116, 240, 0.28); }
+.grow.added .gcell:not(.num) { background-color: rgba(95, 184, 101, 0.16); }
+.grow.added .gcell.num { color: var(--ok); }
+.grow.deleted .gcell:not(.num) { background-color: rgba(134, 138, 145, 0.18); color: var(--dim); text-decoration: line-through; }
+.gcell.dflt { color: var(--null); font-style: italic; }
+.gcell.editing { padding: 0; overflow: visible; }
+.gcell .cell-input { width: 100%; height: 100%; padding: 0 7px; border: 0; border-radius: 0; outline: 1.5px solid var(--accent); outline-offset: -1.5px; background: var(--bg); font: inherit; box-shadow: none; }
+.hkey { color: var(--warn); flex: none; }
+.value-edit { min-height: 280px; max-height: 60vh; padding: 12px; background: var(--bg); border-radius: 6px; font-size: 12.5px; }
 .grid-empty { position: absolute; top: 60px; left: 0; right: 0; text-align: center; color: var(--dim); font-family: var(--ui); }
 
 /* ---------------------------------------------------------------- statusbar */

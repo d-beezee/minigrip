@@ -1,7 +1,7 @@
 {
   "name": "minigrip",
   "version": "1.0.0",
-  "description": "MiniGrip — a small DataGrip-style SQL client for MySQL, MariaDB and PostgreSQL",
+  "description": "MiniGrip — a small DataGrip-style SQL client for MySQL, MariaDB, PostgreSQL and SQLite",
   "scripts": {
     "app": "vite build && electron .",
     "app:dev": "concurrently -k -n web,app \"vite\" \"electron . --dev\"",

@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 const P = {
   plus: 'M8 3v10M3 8h10',
+  minus: 'M3 8h10',
   play: 'M5 3.5v9l7.5-4.5z',
   playAll: 'M3 3.5v9l6-4.5zM9 3.5v9l6-4.5z',
   stop: 'M4 4h8v8H4z',
@@ -133,4 +134,4 @@ export function Field({ label, children, hint, wide }) {
 
 export const fmtBytes = (n) => (n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : (n / 1048576).toFixed(1) + ' MB');
 
-export const TYPE_LABEL = { mysql: 'MySQL', mariadb: 'MariaDB', postgres: 'PostgreSQL' };
+export const TYPE_LABEL = { mysql: 'MySQL', mariadb: 'MariaDB', postgres: 'PostgreSQL', sqlite: 'SQLite' };

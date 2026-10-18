@@ -1,9 +1,11 @@
 // SQL script splitter shared by server and client.
-// Understands quotes, comments, Postgres dollar-quoting and the MySQL DELIMITER command.
+// Understands quotes, comments, Postgres dollar-quoting, the MySQL DELIMITER command and SQLite trigger bodies.
 // Returns [{ text, start, end }] with offsets into the original string.
 
 export function splitSql(sql, dialect = 'mysql') {
   const isPg = dialect === 'postgres';
+  const isLite = dialect === 'sqlite';
+  const isMy = !isPg && !isLite;
   const out = [];
   const n = sql.length;
   let delimiter = ';';
@@ -26,7 +28,7 @@ export function splitSql(sql, dialect = 'mysql') {
     const c2 = sql[i + 1];
 
     // line comments
-    if ((c === '-' && c2 === '-') || (c === '#' && !isPg)) {
+    if ((c === '-' && c2 === '-') || (c === '#' && isMy)) {
       const j = sql.indexOf('\n', i);
       i = j < 0 ? n : j + 1;
       continue;
@@ -44,7 +46,7 @@ export function splitSql(sql, dialect = 'mysql') {
     }
 
     // MySQL client-side DELIMITER command (only at the start of a statement)
-    if (!isPg && codeStart < 0 && lineStart(i) && /^delimiter\s/i.test(sql.slice(i, i + 10))) {
+    if (isMy && codeStart < 0 && lineStart(i) && /^delimiter\s/i.test(sql.slice(i, i + 10))) {
       const j = sql.indexOf('\n', i);
       const line = sql.slice(i, j < 0 ? n : j).trim();
       const m = line.match(/^delimiter\s+(\S+)/i);
@@ -61,7 +63,7 @@ export function splitSql(sql, dialect = 'mysql') {
       i++;
       while (i < n) {
         const ch = sql[i];
-        if (ch === '\\' && !isPg && c !== '`') { i += 2; continue; }
+        if (ch === '\\' && isMy && c !== '`') { i += 2; continue; }
         if (ch === c) {
           if (sql[i + 1] === c) { i += 2; continue; } // doubled quote
           i++;
@@ -84,6 +86,11 @@ export function splitSql(sql, dialect = 'mysql') {
     }
 
     if (sql.startsWith(delimiter, i)) {
+      // a SQLite trigger body (BEGIN ... ; ... END) ends only at the delimiter after END
+      if (isLite && /^create\s+(temp\w*\s+)?trigger\b/i.test(sql.slice(codeStart, i)) && !/\bend\s*$/i.test(sql.slice(codeStart, i))) {
+        i++;
+        continue;
+      }
       push(i);
       i += delimiter.length;
       start = i;

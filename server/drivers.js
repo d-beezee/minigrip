@@ -3,6 +3,10 @@
 //   cancel(), close(), useSchema(name)
 //   schemas(), objects(schema), columns(schema, table), ddl(schema, name, type), completion(schema)
 //   q(ident) quotes an identifier, lit(value) renders a SQL literal
+//   origins(columns) -> [{ schema, table, column } | null]: where each result column comes from
+//   ph(n) is the n-th (1-based) bind placeholder
+import os from 'node:os';
+import { spawn } from 'node:child_process';
 import mysql from 'mysql2/promise';
 import pg from 'pg';
 import { prepareValue } from 'pg/lib/utils.js';
@@ -26,6 +30,13 @@ const MYSQL_ALIASES = {
 function mysqlTypeName(f) {
   const t = (Object.entries(mysql.Types).find(([, v]) => v === f.columnType)?.[0] || String(f.columnType)).toLowerCase();
   return MYSQL_ALIASES[t] || t;
+}
+
+// [table, column, type, pk] rows -> { table: [{ name, type, pk }] } for the editor's autocompletion
+function completionMap(rows) {
+  const out = {};
+  for (const [t, name, type, pk] of rows) (out[t] ??= []).push({ name, type, pk: !!pk });
+  return out;
 }
 
 const sslOpt = (cfg) => (cfg.ssl ? { rejectUnauthorized: !!cfg.sslVerify } : undefined);
@@ -55,7 +66,14 @@ async function mysqlDriver(cfg, host, port) {
 
   const toResult = (rows, fields) =>
     Array.isArray(rows)
-      ? { columns: fields.map((f) => ({ name: f.name, type: mysqlTypeName(f) })), rows }
+      ? {
+          columns: fields.map((f) => ({
+            name: f.name,
+            type: mysqlTypeName(f),
+            org: f.orgTable ? { schema: f.schema, table: f.orgTable, column: f.orgName } : undefined,
+          })),
+          rows,
+        }
       : { affected: rows.affectedRows, insertId: rows.insertId || undefined, info: rows.info || undefined };
 
   const d = {
@@ -82,6 +100,8 @@ async function mysqlDriver(cfg, host, port) {
     async useSchema(s) { await conn.query('USE ' + d.q(s)); },
     async currentSchema() { return (await d.scalarRows('SELECT DATABASE()'))[0][0]; },
     q: (id) => '`' + String(id).replace(/`/g, '``') + '`',
+    ph: () => '?',
+    async origins(cols) { return cols.map((c) => c.org || null); },
     lit(v) {
       if (v === null || v === undefined) return 'NULL';
       if (typeof v === 'number' || typeof v === 'bigint') return String(v);
@@ -119,10 +139,9 @@ async function mysqlDriver(cfg, host, port) {
     },
     async completion(schema) {
       const rows = await d.scalarRows(
-        'SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position', [schema]);
-      const out = {};
-      for (const [t, c] of rows) (out[t] ??= []).push(c);
-      return out;
+        `SELECT table_name, column_name, column_type, column_key = 'PRI'
+           FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position`, [schema]);
+      return completionMap(rows);
     },
     async insertBatch(schema, table, cols, rows) {
       const sql = `INSERT INTO ${d.q(schema)}.${d.q(table)} (${cols.map(d.q).join(', ')}) VALUES ?`;
@@ -154,7 +173,15 @@ async function pgDriver(cfg, host, port) {
 
   const toResult = (r) =>
     r.fields?.length
-      ? { columns: r.fields.map((f) => ({ name: f.name, type: PG_TYPES[f.dataTypeID] || String(f.dataTypeID) })), rows: r.rows, command: r.command }
+      ? {
+          columns: r.fields.map((f) => ({
+            name: f.name,
+            type: PG_TYPES[f.dataTypeID] || String(f.dataTypeID),
+            org: f.tableID ? { tableID: f.tableID, columnID: f.columnID } : undefined,
+          })),
+          rows: r.rows,
+          command: r.command,
+        }
       : { affected: r.rowCount ?? 0, command: r.command };
 
   const d = {
@@ -177,6 +204,18 @@ async function pgDriver(cfg, host, port) {
     async useSchema(s) { await client.query('SET search_path TO ' + d.q(s) + ', public'); },
     async currentSchema() { return (await d.scalarRows('SELECT current_schema()'))[0][0]; },
     q: (id) => '"' + String(id).replace(/"/g, '""') + '"',
+    ph: (n) => '$' + n,
+    // The wire protocol only gives table oid + attnum: resolve them to names.
+    async origins(cols) {
+      const oids = [...new Set(cols.filter((c) => c.org).map((c) => c.org.tableID))];
+      if (!oids.length) return cols.map(() => null);
+      const rows = await d.scalarRows(
+        `SELECT c.oid, n.nspname, c.relname, a.attnum, a.attname
+           FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace JOIN pg_attribute a ON a.attrelid = c.oid
+          WHERE c.oid = ANY($1::oid[]) AND a.attnum > 0`, [oids]);
+      const map = new Map(rows.map(([oid, schema, table, num, column]) => [oid + ':' + num, { schema, table, column }]));
+      return cols.map((c) => (c.org && map.get(c.org.tableID + ':' + c.org.columnID)) || null);
+    },
     lit(v) {
       if (v === null || v === undefined) return 'NULL';
       if (typeof v === 'number' || typeof v === 'bigint') return String(v);
@@ -250,10 +289,12 @@ async function pgDriver(cfg, host, port) {
     },
     async completion(schema) {
       const rows = await d.scalarRows(
-        'SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = $1 ORDER BY table_name, ordinal_position', [schema]);
-      const out = {};
-      for (const [t, c] of rows) (out[t] ??= []).push(c);
-      return out;
+        `SELECT c.relname, a.attname, format_type(a.atttypid, a.atttypmod),
+                EXISTS (SELECT 1 FROM pg_index i WHERE i.indrelid = c.oid AND i.indisprimary AND a.attnum = ANY(i.indkey))
+           FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace JOIN pg_attribute a ON a.attrelid = c.oid
+          WHERE n.nspname = $1 AND c.relkind IN ('r', 'p', 'v', 'm', 'f') AND a.attnum > 0 AND NOT a.attisdropped
+          ORDER BY c.relname, a.attnum`, [schema]);
+      return completionMap(rows);
     },
     async insertBatch(schema, table, cols, rows) {
       const params = [];
@@ -264,7 +305,176 @@ async function pgDriver(cfg, host, port) {
   return d;
 }
 
+/* ------------------------------------------------------------------ SQLite */
+
+// node:sqlite is synchronous and can't be interrupted, so the database lives in a child process:
+// a long query doesn't block the API, and cancel() kills the process. Passed with -e so it also
+// runs from inside an asar; ELECTRON_RUN_AS_NODE turns the Electron binary into plain Node.
+const SQLITE_CHILD = `
+const { DatabaseSync } = require('node:sqlite');
+let db, openError;
+try { db = new DatabaseSync(process.env.MINIGRIP_SQLITE_FILE); } catch (e) { openError = e; }
+const conv = (v) =>
+  typeof v === 'bigint' ? (v >= Number.MIN_SAFE_INTEGER && v <= Number.MAX_SAFE_INTEGER ? Number(v) : String(v)) : v;
+// Expressions have no declared type: take the storage class of the first non-null value.
+const valueType = (rows, i) => {
+  const v = rows.find((r) => r[i] !== null)?.[i];
+  return v === undefined ? '' : typeof v === 'bigint' ? 'integer' : typeof v === 'number' ? 'real' : typeof v === 'string' ? 'text' : 'blob';
+};
+const DML = /^(INSERT|UPDATE|DELETE|REPLACE|WITH)$/;
+function run(sql, params = []) {
+  if (openError) throw openError;
+  const st = db.prepare(sql);
+  const cols = st.columns();
+  if (cols.length) {
+    st.setReturnArrays(true);
+    st.setReadBigInts(true);
+    const rows = st.all(...params);
+    return {
+      columns: cols.map((c, i) => ({
+        name: c.name,
+        type: c.type ? c.type.toLowerCase() : valueType(rows, i),
+        org: c.table ? { schema: c.database, table: c.table, column: c.column } : undefined,
+      })),
+      rows: rows.map((r) => r.map(conv)),
+    };
+  }
+  const r = st.run(...params);
+  const command = (sql.match(/^\\s*(\\w+)/) || [])[1]?.toUpperCase();
+  return {
+    affected: DML.test(command) ? Number(r.changes) : 0, // changes() keeps the last DML count across DDL
+    insertId: /^(INSERT|REPLACE)$/.test(command) ? conv(r.lastInsertRowid) : undefined,
+    command,
+  };
+}
+process.on('message', ({ id, sql, params }) => {
+  try {
+    process.send({ id, result: run(sql, params) });
+  } catch (e) {
+    process.send({ id, error: { message: e.message, code: e.errstr || e.code } });
+  }
+});
+process.on('disconnect', () => process.exit());
+`;
+
+async function sqliteDriver(cfg) {
+  const file = String(cfg.file || '').trim().replace(/^~(?=$|[\\/])/, os.homedir());
+  if (!file) throw new Error('Choose a database file');
+  const child = spawn(process.execPath, ['-e', SQLITE_CHILD], {
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', MINIGRIP_SQLITE_FILE: file },
+    stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
+    serialization: 'advanced', // keeps Uint8Array and BigInt
+    windowsHide: true,
+  });
+  const pending = new Map();
+  let seq = 0;
+  let alive = true;
+  let fatal = null;
+  const fail = (e) => {
+    alive = false;
+    fatal ??= e;
+    for (const p of pending.values()) p.reject(fatal);
+    pending.clear();
+  };
+  child.on('message', ({ id, result, error }) => {
+    const p = pending.get(id);
+    pending.delete(id);
+    if (error) p?.reject(Object.assign(new Error(error.message), { code: error.code }));
+    else p?.resolve(result);
+  });
+  child.on('error', fail);
+  child.on('exit', () => fail(new Error('Connection closed')));
+  const call = (sql, params) => {
+    if (!alive) return Promise.reject(fatal);
+    return new Promise((resolve, reject) => {
+      const id = ++seq;
+      pending.set(id, { resolve, reject });
+      child.send({ id, sql, params });
+    });
+  };
+  const fromChild = (r) => (r.rows ? { ...r, rows: r.rows.map((row) => row.map((v) => (v instanceof Uint8Array ? Buffer.from(v) : v))) } : r);
+  let version;
+  try {
+    version = (await call('SELECT sqlite_version()')).rows[0][0];
+  } catch (e) {
+    child.kill('SIGKILL');
+    throw e;
+  }
+
+  const d = {
+    dialect: 'sqlite',
+    version,
+    get alive() { return alive; },
+    async query(sql, params) {
+      return [fromChild(await call(sql, params))];
+    },
+    async scalarRows(sql, params) {
+      return fromChild(await call(sql, params)).rows;
+    },
+    // SQLite can't be interrupted from outside: drop the connection instead (reopened on next use).
+    async cancel() {
+      fail(new Error('Query cancelled (connection closed)'));
+      child.kill('SIGKILL');
+    },
+    async close() { child.kill('SIGKILL'); },
+    async useSchema() {}, // no USE: unqualified names resolve across all attached databases
+    async currentSchema() { return 'main'; },
+    q: (id) => '"' + String(id).replace(/"/g, '""') + '"',
+    ph: () => '?',
+    async origins(cols) { return cols.map((c) => c.org || null); },
+    lit(v) {
+      if (v === null || v === undefined) return 'NULL';
+      if (typeof v === 'number' || typeof v === 'bigint') return String(v);
+      if (typeof v === 'boolean') return v ? '1' : '0';
+      if (Buffer.isBuffer(v)) return "X'" + v.toString('hex') + "'";
+      if (typeof v === 'object') v = JSON.stringify(v);
+      return "'" + String(v).replace(/'/g, "''") + "'";
+    },
+    textType: 'TEXT',
+    async schemas() {
+      return (await d.scalarRows('PRAGMA database_list')).map((r) => r[1]).filter((n) => n !== 'temp');
+    },
+    async objects(schema) {
+      const rows = await d.scalarRows(
+        `SELECT name, type FROM ${d.q(schema)}.sqlite_master
+          WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY name`);
+      return rows.map(([name, type]) => ({ name, type }));
+    },
+    async columns(schema, table) {
+      const rows = await d.scalarRows(
+        'SELECT name, type, "notnull", dflt_value, pk, hidden FROM pragma_table_xinfo(?, ?) ORDER BY cid', [table, schema]);
+      return rows.map(([name, type, notnull, def, pk, hidden]) => ({
+        name, type: type.toLowerCase(), nullable: !notnull, pk: pk > 0, default: def,
+        extra: hidden === 2 || hidden === 3 ? 'generated' : undefined,
+      }));
+    },
+    async ddl(schema, name, type) {
+      // a table comes with its indexes (triggers are left out, like MySQL's SHOW CREATE TABLE)
+      const rows = await d.scalarRows(
+        type === 'table'
+          ? `SELECT sql FROM ${d.q(schema)}.sqlite_master WHERE tbl_name = ? AND type IN ('table', 'index') AND sql IS NOT NULL
+              ORDER BY type = 'table' DESC, name`
+          : `SELECT sql FROM ${d.q(schema)}.sqlite_master WHERE name = ? AND sql IS NOT NULL`, [name]);
+      if (!rows.length) throw new Error(`${name} not found in ${schema}`);
+      return rows.map((r) => r[0].trim() + ';').join('\n');
+    },
+    async completion(schema) {
+      const rows = await d.scalarRows(
+        `SELECT m.name, p.name, lower(p.type), p.pk > 0 FROM ${d.q(schema)}.sqlite_master m JOIN pragma_table_info(m.name, ?) p
+          WHERE m.type IN ('table', 'view') AND m.name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY m.name, p.cid`, [schema]);
+      return completionMap(rows);
+    },
+    async insertBatch(schema, table, cols, rows) {
+      const tuple = '(' + cols.map(() => '?').join(', ') + ')';
+      await call(`INSERT INTO ${d.q(schema)}.${d.q(table)} (${cols.map(d.q).join(', ')}) VALUES ${rows.map(() => tuple).join(', ')}`,
+        rows.flat());
+    },
+  };
+  return d;
+}
+
 export function createDriver(cfg, host, port) {
+  if (cfg.type === 'sqlite') return sqliteDriver(cfg);
   return cfg.type === 'postgres' ? pgDriver(cfg, host, port) : mysqlDriver(cfg, host, port);
 }
 
